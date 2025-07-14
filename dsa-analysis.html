@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSA减影造影诊断系统 - AI分析功能</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #3949ab 100%);
+        }
+        .scan-animation {
+            animation: scan 2s infinite alternate;
+        }
+        @keyframes scan {
+            0% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        .vessel-path {
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+            animation: dash 3s linear forwards;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: 0; }
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            border-radius: 10px;
+            width: 500px;
+            max-width: 90%;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        .progress-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4caf50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .drop-area {
+            border: 2px dashed #3b82f6;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            background-color: #f0f9ff;
+            transition: all 0.3s;
+        }
+        .drop-area.active {
+            background-color: #dbeafe;
+            border-color: #2563eb;
+        }
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .file-icon {
+            margin-right: 10px;
+            color: #3b82f6;
+        }
+        .ai-processing {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            z-index: 10;
+        }
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .model-params {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .detection-box {
+            position: absolute;
+            border: 2px solid #FF0000;
+            background-color: rgba(255, 0, 0, 0.1);
+            z-index: 5;
+            pointer-events: none;
+        }
+        .detection-label {
+            position: absolute;
+            background: rgba(255, 0, 0, 0.7);
+            color: white;
+            padding: 2px 5px;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 6;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-10px); }
+        }
+        .animate-fadeIn {
+            animation: fadeIn 0.3s ease forwards;
+        }
+        .animate-fadeOut {
+            animation: fadeOut 0.3s ease forwards;
+        }
+        .processing-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            z-index: 10;
+        }
+        .model-status {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+        .model-status.loaded {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .model-status.failed {
+            background-color: #fee2e2;
+            color: #b91c1c;
+        }
+        .model-status.loading {
+            background-color: #dbeafe;
+            color: #1d4ed8;
+        }
+        .detection-result-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        .detection-video-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        .result-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            font-size: 1.2rem;
+            text-align: center;
+            padding: 20px;
+        }
+        .model-progress {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .model-progress-bar {
+            height: 100%;
+            background: #3b82f6;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .model-loading-details {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 5px;
+        }
+        .detection-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+        }
+        .ai-analysis-result {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 10;
+        }
+        .image-marker {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #FF0000;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 0 4px rgba(255, 0, 0, 0.3);
+            animation: pulseMarker 1.5s infinite;
+        }
+        @keyframes pulseMarker {
+            0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="h-screen w-screen p-4 flex flex-col">
+        <!-- Header -->
+        <div class="gradient-bg text-white rounded-t-xl p-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fas fa-brain text-2xl text-blue-300"></i>
+                <h1 class="text-xl font-bold">颅内血管狭窄DSA诊断系统</h1>
+            </div>
+            <div class="flex space-x-2">
+                <button id="uploadButton" class="bg-indigo-500 hover:bg-indigo-600 px-3 py-1 rounded-lg text-sm flex items-center">
+                    <i class="fas fa-upload mr-1"></i> 上传
+                </button>
+                <button id="saveButton" class="bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded-lg text-sm flex items-center">
+                    <i class="fas fa-save mr-1"></i> 保存
+                </button>
+                <button class="bg-green-500 hover:bg-green-600 px-3 py-1 rounded-lg text-sm flex items-center">
+                    <i class="fas fa-print mr-1"></i> 打印
+                </button>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="flex-1 grid grid-cols-5 gap-4 bg-white p-4 rounded-b-xl">
+            <!-- Left Panel - Patient Info -->
+            <div class="bg-gray-50 rounded-lg p-3 border border-gray-200 col-span-1">
+                <h2 class="font-semibold text-gray-700 border-b pb-2 mb-3 flex items-center">
+                    <i class="fas fa-user-circle mr-2 text-blue-500"></i> 患者信息
+                </h2>
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-500">姓名</label>
+                        <p class="font-medium">张某某</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">性别/年龄</label>
+                        <p class="font-medium">男 / 58岁</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">病历号</label>
+                        <p class="font-medium">20231128012</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">检查日期</label>
+                        <p class="font-medium">2023-11-28</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">临床诊断</label>
+                        <p class="font-medium">短暂性脑缺血发作</p>
+                    </div>
+                </div>
+                
+                <h2 class="font-semibold text-gray-700 border-b pb-2 mt-6 mb-3 flex items-center">
+                    <i class="fas fa-diagnoses mr-2 text-blue-500"></i> 病变信息
+                </h2>
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-500">狭窄血管数量</label>
+                        <p class="font-medium">3处</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">最严重狭窄</label>
+                        <p class="font-medium text-red-500">MCA 55% (中度)</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">病变特征</label>
+                        <p class="font-medium">偏心性狭窄，边缘不规则</p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">侧支循环</label>
+                        <p class="font-medium">前交通动脉开放，部分代偿</p>
+                    </div>
+                </div>
+                
+                <!-- ONNX模型参数 -->
+                <h2 class="font-semibold text-gray-700 border-b pb-2 mt-6 mb-3 flex items-center">
+                    <i class="fas fa-cogs mr-2 text-blue-500"></i> AI模型参数
+                </h2>
+                <div class="model-params">
+                    <div class="text-sm font-medium text-gray-700 mb-2 flex justify-between items-center">
+                        <span>ONNX 脑血管狭窄检测模型</span>
+                        <span id="modelStatus" class="model-status loading">
+                            <i class="fas fa-circle-notch fa-spin mr-1"></i> 加载中
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                            <span class="text-gray-500">输入尺寸:</span>
+                            <span class="font-medium">1024×1024</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">置信度阈值:</span>
+                            <span class="font-medium">0.65</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">IOU阈值:</span>
+                            <span class="font-medium">0.45</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">模型版本:</span>
+                            <span class="font-medium">v1.0</span>
+                        </div>
+                        <div class="col-span-2">
+                            <span class="text-gray-500">类别:</span>
+                            <span class="font-medium">狭窄</span>
+                        </div>
+                    </div>
+                    <div class="model-progress">
+                        <div id="modelProgressBar" class="model-progress-bar"></div>
+                    </div>
+                    <div id="modelLoadDetails" class="model-loading-details">
+                        正在加载模型文件: <span id="currentFile">best.onnx</span>
+                    </div>
+                    <div id="modelInfo" class="mt-3 text-xs bg-blue-50 p-2 rounded hidden">
+                        <p id="modelInfoText">模型路径: best.onnx</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Center Panel - DSA Videos and Images -->
+            <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 flex flex-col col-span-3">
+                <h2 class="font-semibold text-gray-700 border-b pb-2 mb-3 flex items-center">
+                    <i class="fas fa-video mr-2 text-blue-500"></i> DSA动态影像
+                </h2>
+                
+                <!-- Video Row -->
+                <div class="grid grid-cols-2 gap-4 mb-4" style="height: 40vh;">
+                    <div class="bg-black rounded-lg relative overflow-hidden">
+                        <video id="originalVideo" class="w-full h-full" controls loop muted>
+                            <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+                        </video>
+                        <div class="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
+                            DSA减影原始影像
+                        </div>
+                        <div id="originalProcessing" class="processing-overlay hidden">
+                            <i class="fas fa-cog fa-spin text-3xl mb-2"></i>
+                            <p class="text-center">正在加载视频<br><small class="text-gray-300">请稍候...</small></p>
+                        </div>
+                    </div>
+                    <div class="bg-black rounded-lg relative overflow-hidden detection-video-container">
+                        <div id="detectionResult" class="detection-result-container">
+                            <video id="detectionVideo" class="w-full h-full" controls loop muted style="display:none;">
+                                <!-- 视频源将在分析后添加 -->
+                            </video>
+                            <canvas id="detectionCanvas" class="detection-canvas"></canvas>
+                            <div id="resultPlaceholder" class="result-placeholder">
+                                <div class="text-center">
+                                    <i class="fas fa-video-slash text-3xl mb-3"></i>
+                                    <p>AI分析结果将在此显示</p>
+                                    <p class="text-sm mt-2">请先上传视频并点击"AI分析"按钮</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ai-analysis-result hidden" id="aiAnalysisResult">
+                            <i class="fas fa-brain mr-2 text-blue-400"></i>
+                            <span>检测到 <span id="detectionCount">0</span> 处狭窄区域</span>
+                        </div>
+                        <div class="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
+                            DSA血管狭窄AI定位
+                        </div>
+                        <div id="detectionProcessing" class="processing-overlay hidden">
+                            <div class="text-center mb-3">
+                                <div class="pulse mb-2">
+                                    <i class="fas fa-brain text-3xl text-blue-400"></i>
+                                </div>
+                                <p>AI分析中...</p>
+                            </div>
+                            <div class="w-48 bg-gray-700 rounded-full h-2 mb-1">
+                                <div id="aiProgress" class="bg-blue-500 h-2 rounded-full" style="width: 0%"></div>
+                            </div>
+                            <div class="text-xs text-gray-300 mt-1">
+                                <span id="aiProgressText">0%</span> - 已处理 <span id="processedFrames">0</span> 帧
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Images Row -->
+                <div class="grid grid-cols-3 gap-4" style="height: 20vh;">
+                    <div class="bg-black rounded-lg relative overflow-hidden group" id="image1">
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <img src="https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=200&w=300" class="w-full h-full object-contain" alt="关键帧1">
+                        </div>
+                        <div class="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
+                            关键帧1
+                        </div>
+                        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1">
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="in">
+                                <i class="fas fa-search-plus text-xs"></i>
+                            </button>
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="out">
+                                <i class="fas fa-search-minus text-xs"></i>
+                            </button>
+                            <button class="fullscreen-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70">
+                                <i class="fas fa-expand text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="bg-black rounded-lg relative overflow-hidden group" id="image2">
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <img src="https://images.unsplash.com/photo-1576091160550-2173dba0ef41?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=200&w=300" class="w-full h-full object-contain" alt="关键帧2">
+                        </div>
+                        <div class="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
+                            关键帧2
+                        </div>
+                        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1">
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="in">
+                                <i class="fas fa-search-plus text-xs"></i>
+                            </button>
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="out">
+                                <i class="fas fa-search-minus text-xs"></i>
+                            </button>
+                            <button class="fullscreen-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70">
+                                <i class="fas fa-expand text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="bg-black rounded-lg relative overflow-hidden group" id="image3">
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <img src="https://images.unsplash.com/photo-1581595219316-5e5f7c0d14c0?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=200&w=300" class="w-full h-full object-contain" alt="关键帧3">
+                        </div>
+                        <div class="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
+                            关键帧3
+                        </div>
+                        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1">
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="in">
+                                <i class="fas fa-search-plus text-xs"></i>
+                            </button>
+                            <button class="zoom-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70" data-zoom="out">
+                                <i class="fas fa-search-minus text-xs"></i>
+                            </button>
+                            <button class="fullscreen-btn bg-black bg-opacity-50 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-opacity-70">
+                                <i class="fas fa-expand text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-4 flex space-x-3">
+                    <button class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex items-center">
+                        <i class="fas fa-sliders-h mr-2"></i> 影像参数
+                    </button>
+                    
+                    <button class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm flex items-center">
+                        <i class="fas fa-sync-alt mr-2"></i> 同步播放
+                    </button>
+                    
+                    <!-- AI分析按钮 -->
+                    <button id="aiAnalyzeButton" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm flex items-center ml-auto">
+                        <i class="fas fa-robot mr-2"></i> AI分析
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Right Panel - Diagnosis -->
+            <div class="bg-gray-50 rounded-lg p-3 border border-gray-200 flex flex-col col-span-1">
+                <h2 class="font-semibold text-gray-700 border-b pb-2 mb-3 flex items-center">
+                    <i class="fas fa-diagnoses mr-2 text-blue-500"></i> 诊断报告
+                </h2>
+                
+                <div class="flex-1">
+                    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-3">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                            </div>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-yellow-800">中度狭窄警报</h3>
+                                <div class="mt-1 text-sm text-yellow-700">
+                                    <p>右侧大脑中动脉M1段中度狭窄 (55%)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h2 class="font-semibold text-gray-700 border-b pb-2 mb-3 flex items-center">
+                        <i class="fas fa-search-plus mr-2 text-blue-500"></i> 狭窄区域详细分析
+                    </h2>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-xs text-gray-500">MCA M1段</label>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-1">
+                                <div class="bg-red-500 h-2.5 rounded-full" style="width: 55%"></div>
+                            </div>
+                            <p class="font-medium text-red-500 text-xs mt-1">55% (中度狭窄)</p>
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-500">ACA A1段</label>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-1">
+                                <div class="bg-yellow-500 h-2.5 rounded-full" style="width: 30%"></div>
+                            </div>
+                            <p class="font-medium text-yellow-500 text-xs mt-1">30% (轻度狭窄)</p>
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-500">PCA P2段</label>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-1">
+                                <div class="bg-green-500 h-2.5 rounded-full" style="width: 15%"></div>
+                            </div>
+                            <p class="font-medium text-green-500 text-xs mt-1">15% (轻度狭窄)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <label class="text-xs text-gray-500">诊断意见</label>
+                        <textarea id="diagnosisText" class="w-full mt-1 p-2 border rounded text-sm h-24" placeholder="输入诊断意见...">
+右侧大脑中动脉M1段中度狭窄(约55%)，考虑动脉粥样硬化性狭窄。建议进一步评估脑灌注情况，必要时考虑血管内治疗。
+                        </textarea>
+                    </div>
+                </div>
+                
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <button class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded text-sm flex items-center justify-center">
+                        <i class="fas fa-check-circle mr-1"></i> 确认诊断
+                    </button>
+                    <button class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm flex items-center justify-center">
+                        <i class="fas fa-redo mr-1"></i> 重新评估
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="bg-gray-800 text-white text-xs p-1 mt-2 rounded flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span><i class="fas fa-hospital mr-1 text-blue-300"></i> 河北大学</span>
+                <span><i class="fas fa-user-md mr-1 text-green-300"></i> 电子信息工程学院</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="text-green-400"><i class="fas fa-circle mr-1"></i> 已连接PACS</span>
+                <span id="currentTime"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div id="uploadModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="bg-blue-600 text-white p-4 rounded-t-lg">
+                <h2 class="text-xl font-bold"><i class="fas fa-upload mr-2"></i>上传DSA影像</h2>
+            </div>
+            
+            <div class="p-4">
+                <div class="drop-area" id="dropArea">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-blue-500 mb-3"></i>
+                    <h3 class="font-bold text-lg mb-1">拖放视频文件到此处</h3>
+                    <p class="text-gray-600 mb-4">或点击下方按钮选择文件</p>
+                    <input type="file" id="fileInput" accept="video/mp4" class="hidden">
+                    <button id="selectFileBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+                        <i class="fas fa-folder-open mr-2"></i>选择MP4文件
+                    </button>
+                    <p class="text-sm text-gray-500 mt-3">仅支持MP4格式视频文件，最大500MB</p>
+                </div>
+                
+                <div class="mt-4 file-list hidden" id="fileList">
+                    <div class="font-semibold text-gray-700 mb-2">已选文件:</div>
+                    <div class="file-item">
+                        <i class="fas fa-file-video file-icon"></i>
+                        <div class="flex-1">
+                            <div class="font-medium" id="fileName">未选择文件</div>
+                            <div class="text-xs text-gray-500" id="fileSize">-</div>
+                        </div>
+                        <button id="clearFileBtn" class="text-red-500 hover:text-red-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="mt-4 progress-bar hidden" id="progressContainer">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="text-right text-sm mt-1 hidden" id="progressText">0%</div>
+                
+                <div class="mt-6 flex justify-end space-x-3">
+                    <button id="cancelUploadBtn" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">
+                        取消
+                    </button>
+                    <button id="confirmUploadBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg disabled:opacity-50" disabled>
+                        <i class="fas fa-upload mr-2"></i>开始上传
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden canvas for video processing -->
+    <canvas id="processingCanvas" style="display: none;"></canvas>
+    
+    <script>
+        // 模型配置
+        const MODEL_PATH = 'https://example.com/path/to/best.onnx'; // 替换为实际的模型URL
+        const CLASS_NAMES = ['Stenosis']; // 类别名称
+        const CLASS_COLORS = ['#FF0000']; // 类别颜色
+        const CONF_THRESHOLD = 0.5; // 置信度阈值
+        const IOU_THRESHOLD = 0.45; // NMS IOU阈值
+        const INPUT_SIZE = 1024; // 模型输入尺寸
+
+        // 获取DOM元素
+        const uploadButton = document.getElementById('uploadButton');
+        const uploadModal = document.getElementById('uploadModal');
+        const fileInput = document.getElementById('fileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
+        const dropArea = document.getElementById('dropArea');
+        const fileList = document.getElementById('fileList');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const clearFileBtn = document.getElementById('clearFileBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const confirmUploadBtn = document.getElementById('confirmUploadBtn');
+        const cancelUploadBtn = document.getElementById('cancelUploadBtn');
+        const originalVideo = document.getElementById('originalVideo');
+        const aiAnalyzeButton = document.getElementById('aiAnalyzeButton');
+        const detectionProcessing = document.getElementById('detectionProcessing');
+        const aiProgressBar = document.getElementById('aiProgress');
+        const progressTextElement = document.getElementById('aiProgressText');
+        const processedFrames = document.getElementById('processedFrames');
+        const detectionCanvas = document.getElementById('detectionCanvas');
+        const ctx = detectionCanvas.getContext('2d');
+        const processingCanvas = document.getElementById('processingCanvas');
+        const processingCtx = processingCanvas.getContext('2d');
+        const diagnosisText = document.getElementById('diagnosisText');
+        const modelStatus = document.getElementById('modelStatus');
+        const modelInfo = document.getElementById('modelInfo');
+        const modelInfoText = document.getElementById('modelInfoText');
+        const resultPlaceholder = document.getElementById('resultPlaceholder');
+        const modelProgressBar = document.getElementById('modelProgressBar');
+        const currentFileElement = document.getElementById('currentFile');
+        const aiAnalysisResult = document.getElementById('aiAnalysisResult');
+        const detectionCount = document.getElementById('detectionCount');
+
+        // 模型会话和状态
+        let modelSession = null;
+        let videoUploaded = false;
+        let modelLoadAttempted = false;
+        let selectedFile = null;
+        let totalDetections = 0;
+
+        // 加载ONNX模型
+        async function loadModel() {
+            try {
+                updateModelStatus('loading', '加载中...');
+                showInfoMessage('正在加载ONNX模型...');
+                
+                // 更新加载进度
+                const updateProgress = (progress) => {
+                    modelProgressBar.style.width = `${progress}%`;
+                };
+                
+                // 加载模型
+                modelSession = await ort.InferenceSession.create(MODEL_PATH, {
+                    progress: (p) => {
+                        updateProgress(p * 100);
+                    },
+                    executionProviders: ['wasm'] // 使用WASM后端，兼容性更好
+                });
+                
+                // 更新模型状态
+                updateModelStatus('loaded', '模型已加载');
+                showSuccessMessage('ONNX模型加载成功！');
+                
+                // 更新模型信息
+                modelInfo.classList.remove('hidden');
+                modelInfoText.innerHTML = `
+                    <p><strong>模型路径:</strong> ${MODEL_PATH}</p>
+                    <p><strong>输入形状:</strong> ${modelSession.inputNames[0]}: [1, 3, ${INPUT_SIZE}, ${INPUT_SIZE}]</p>
+                    <p><strong>输出数量:</strong> ${modelSession.outputNames.length}</p>
+                `;
+                
+                return true;
+            } catch (error) {
+                console.error('模型加载失败:', error);
+                updateModelStatus('failed', '模型加载失败');
+                showErrorMessage('模型加载失败: ' + error.message);
+                return false;
+            } finally {
+                modelLoadAttempted = true;
+            }
+        }
+
+        // 更新模型状态显示
+        function updateModelStatus(status, text) {
+            modelStatus.className = 'model-status ' + status;
+            modelStatus.innerHTML = status === 'loading' 
+                ? `<i class="fas fa-circle-notch fa-spin mr-1"></i> ${text}`
+                : status === 'loaded'
+                ? `<i class="fas fa-check-circle mr-1"></i> ${text}`
+                : `<i class="fas fa-exclamation-triangle mr-1"></i> ${text}`;
+        }
+
+        // 预处理图像
+        function preprocessImage(frame) {
+            // 创建临时canvas
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // 设置canvas尺寸为模型输入尺寸
+            tempCanvas.width = INPUT_SIZE;
+            tempCanvas.height = INPUT_SIZE;
+            
+            // 绘制并缩放图像
+            tempCtx.drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
+            
+            // 获取图像数据
+            const imageData = tempCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+            const data = imageData.data;
+            
+            // 创建输入张量数据
+            const inputData = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+            
+            // 归一化并转换为RGB格式 (NCHW)
+            for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
+                inputData[i] = data[i * 4] / 255.0;         // R
+                inputData[i + INPUT_SIZE * INPUT_SIZE] = data[i * 4 + 1] / 255.0; // G
+                inputData[i + 2 * INPUT_SIZE * INPUT_SIZE] = data[i * 4 + 2] / 255.0; // B
+            }
+            
+            return inputData;
+        }
+
+        // 使用ONNX模型进行推理
+        async function runModelInference(frame) {
+            if (!modelSession) {
+                throw new Error('模型未加载');
+            }
+            
+            // 预处理图像
+            const inputData = preprocessImage(frame);
+            
+            // 创建输入张量
+            const inputTensor = new ort.Tensor('float32', inputData, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+            
+            // 运行推理
+            const outputs = await modelSession.run({ 'images': inputTensor });
+            
+            // 返回模型输出
+            return outputs;
+        }
+
+        // 后处理函数 - 解析模型输出
+        function postprocess(outputs, origWidth, origHeight) {
+            // 假设输出是一个形状为[1, 25200, 6]的张量
+            const predictions = outputs.output0.data;
+            const detections = [];
+            
+            // 缩放因子
+            const xScale = origWidth / INPUT_SIZE;
+            const yScale = origHeight / INPUT_SIZE;
+            
+            // 解析检测结果
+            for (let i = 0; i < outputs.output0.dims[1]; i++) {
+                const startIdx = i * 6;
+                const confidence = predictions[startIdx + 4];
+                
+                // 过滤低置信度检测
+                if (confidence < CONF_THRESHOLD) continue;
+                
+                // 提取边界框坐标 (xywh格式)
+                const x = predictions[startIdx] * xScale;
+                const y = predictions[startIdx + 1] * yScale;
+                const w = predictions[startIdx + 2] * xScale;
+                const h = predictions[startIdx + 3] * yScale;
+                
+                // 转换为xyxy格式
+                const x1 = x - w / 2;
+                const y1 = y - h / 2;
+                const x2 = x + w / 2;
+                const y2 = y + h / 2;
+                
+                // 类别ID和置信度
+                const classId = 0; // 单类别模型
+                const classConfidence = predictions[startIdx + 5] * confidence;
+                
+                detections.push({
+                    classId,
+                    confidence: classConfidence,
+                    x1, y1, x2, y2
+                });
+            }
+            
+            // 应用NMS (非极大值抑制)
+            return applyNMS(detections);
+        }
+
+        // 简单的NMS实现
+        function applyNMS(detections) {
+            // 按置信度降序排序
+            detections.sort((a, b) => b.confidence - a.confidence);
+            
+            const finalDetections = [];
+            
+            while (detections.length > 0) {
+                // 取最高置信度的检测
+                const current = detections.shift();
+                finalDetections.push(current);
+                
+                // 计算与剩余检测的IOU并移除重叠度高的
+                for (let i = detections.length - 1; i >= 0; i--) {
+                    const iou = calculateIOU(current, detections[i]);
+                    if (iou > IOU_THRESHOLD) {
+                        detections.splice(i, 1);
+                    }
+                }
+            }
+            
+            return finalDetections;
+        }
+
+        // 计算两个边界框的IOU
+        function calculateIOU(box1, box2) {
+            const x1 = Math.max(box1.x1, box2.x1);
+            const y1 = Math.max(box1.y1, box2.y1);
+            const x2 = Math.min(box1.x2, box2.x2);
+            const y2 = Math.min(box1.y2, box2.y2);
+            
+            const interArea = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+            const box1Area = (box1.x2 - box1.x1) * (box1.y2 - box1.y1);
+            const box2Area = (box2.x2 - box2.x1) * (box2.y2 - box2.y1);
+            
+            return interArea / (box1Area + box2Area - interArea);
+        }
+
+        // 绘制检测结果
+        function drawDetections(detections) {
+            // 清除之前的检测结果
+            ctx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+            
+            // 设置画布尺寸与视频一致
+            const video = originalVideo;
+            detectionCanvas.width = video.videoWidth;
+            detectionCanvas.height = video.videoHeight;
+            
+            // 更新检测计数
+            detectionCount.textContent = detections.length;
+            aiAnalysisResult.classList.remove('hidden');
+            totalDetections += detections.length;
+            
+            // 绘制每个检测结果
+            detections.forEach(det => {
+                const color = CLASS_COLORS[det.classId];
+                const className = CLASS_NAMES[det.classId];
+                const {x1, y1, x2, y2} = det;
+                const width = x2 - x1;
+                const height = y2 - y1;
+                
+                // 绘制边界框
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x1, y1, width, height);
+                
+                // 绘制标签背景
+                const label = `${className} ${(det.confidence * 100).toFixed(1)}%`;
+                const textWidth = ctx.measureText(label).width;
+                ctx.fillStyle = color + 'CC';
+                ctx.fillRect(x1, y1 - 20, textWidth + 10, 20);
+                
+                // 绘制标签文本
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.fillText(label, x1 + 5, y1 - 5);
+            });
+        }
+
+        // AI分析功能
+        aiAnalyzeButton.addEventListener('click', async () => {
+            if (!videoUploaded) {
+                showErrorMessage('请先上传视频');
+                return;
+            }
+            
+            // 确保模型已加载
+            if (!modelSession && !modelLoadAttempted) {
+                const loaded = await loadModel();
+                if (!loaded) return;
+            }
+            
+            if (!modelSession) {
+                showErrorMessage('模型未加载，无法进行分析');
+                return;
+            }
+            
+            // 禁用按钮
+            aiAnalyzeButton.disabled = true;
+            aiAnalyzeButton.classList.add('opacity-50');
+            
+            // 显示处理状态
+            detectionProcessing.classList.remove('hidden');
+            resultPlaceholder.style.display = 'none';
+            totalDetections = 0;
+            
+            try {
+                // 分析视频
+                await analyzeVideoWithModel();
+                
+                // 显示成功消息
+                showSuccessMessage('AI分析完成！');
+                
+                // 更新诊断报告
+                diagnosisText.value += '\n\nAI分析完成，发现' + totalDetections + '处血管狭窄区域';
+            } catch (error) {
+                console.error('AI分析失败:', error);
+                showErrorMessage(`AI分析失败: ${error.message}`);
+            } finally {
+                // 启用按钮
+                aiAnalyzeButton.disabled = false;
+                aiAnalyzeButton.classList.remove('opacity-50');
+            }
+        });
+
+        // 使用ONNX模型分析视频
+        async function analyzeVideoWithModel() {
+            return new Promise(async (resolve) => {
+                const video = originalVideo;
+                
+                // 确保视频已加载元数据
+                if (video.readyState < 2) {
+                    await new Promise(resolve => {
+                        video.addEventListener('loadedmetadata', resolve);
+                    });
+                }
+                
+                const duration = Math.min(video.duration, 10); // 最多处理10秒
+                const fps = 5; // 每秒处理帧数
+                const totalFrames = Math.floor(duration * fps);
+                let currentFrame = 0;
+                
+                // 隐藏结果占位符
+                resultPlaceholder.style.display = 'none';
+                
+                // 处理视频帧
+                const processFrame = async () => {
+                    if (currentFrame >= totalFrames) {
+                        detectionProcessing.classList.add('hidden');
+                        resolve();
+                        return;
+                    }
+                    
+                    try {
+                        // 获取当前视频帧
+                        const seekTime = (currentFrame / fps);
+                        video.currentTime = seekTime;
+                        
+                        // 等待视频帧更新
+                        await new Promise(resolve => {
+                            video.onseeked = resolve;
+                        });
+                        
+                        // 运行模型推理
+                        const outputs = await runModelInference(video);
+                        
+                        // 后处理
+                        const detections = postprocess(outputs, video.videoWidth, video.videoHeight);
+                        
+                        // 绘制检测结果
+                        drawDetections(detections);
+                        
+                        // 更新进度
+                        const progress = Math.min(100, Math.floor((currentFrame / totalFrames) * 100));
+                        aiProgressBar.style.width = `${progress}%`;
+                        progressTextElement.textContent = `${progress}%`;
+                        processedFrames.textContent = currentFrame;
+                        
+                        currentFrame++;
+                        
+                        // 处理下一帧
+                        setTimeout(processFrame, 0);
+                    } catch (error) {
+                        console.error('处理帧时出错:', error);
+                        currentFrame++;
+                        setTimeout(processFrame, 0);
+                    }
+                };
+                
+                // 开始处理
+                processFrame();
+            });
+        }
+
+        // 文件上传功能
+        uploadButton.addEventListener('click', () => {
+            uploadModal.classList.remove('hidden');
+        });
+        
+        selectFileBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                selectedFile = e.target.files[0];
+                updateFileInfo(selectedFile);
+                fileList.classList.remove('hidden');
+                progressContainer.classList.add('hidden');
+                progressText.classList.add('hidden');
+                confirmUploadBtn.disabled = false;
+            }
+        });
+        
+        clearFileBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            fileList.classList.add('hidden');
+            confirmUploadBtn.disabled = true;
+        });
+        
+        confirmUploadBtn.addEventListener('click', () => {
+            if (!selectedFile) return;
+            
+            // 模拟上传过程
+            progressContainer.classList.remove('hidden');
+            progressText.classList.remove('hidden');
+            confirmUploadBtn.disabled = true;
+            
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 5;
+                progressFill.style.width = `${progress}%`;
+                progressText.textContent = `${progress}%`;
+                
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    
+                    // 模拟上传成功
+                    setTimeout(() => {
+                        uploadModal.classList.add('hidden');
+                        showSuccessMessage('视频上传成功！');
+                        
+                        // 设置视频源
+                        const videoUrl = URL.createObjectURL(selectedFile);
+                        originalVideo.src = videoUrl;
+                        originalVideo.load();
+                        
+                        // 启用AI分析按钮
+                        videoUploaded = true;
+                        aiAnalyzeButton.disabled = false;
+                        aiAnalyzeButton.classList.remove('opacity-50');
+                        
+                        // 重置进度
+                        progressFill.style.width = '0%';
+                        progressText.textContent = '0%';
+                    }, 500);
+                }
+            }, 100);
+        });
+        
+        cancelUploadBtn.addEventListener('click', () => {
+            uploadModal.classList.add('hidden');
+            selectedFile = null;
+            fileInput.value = '';
+            fileList.classList.add('hidden');
+            progressContainer.classList.add('hidden');
+            progressText.classList.add('hidden');
+            confirmUploadBtn.disabled = true;
+        });
+        
+        // 拖放功能
+        dropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropArea.classList.add('active');
+        });
+        
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('active');
+        });
+        
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.classList.remove('active');
+            
+            if (e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                if (file.type.startsWith('video/')) {
+                    selectedFile = file;
+                    updateFileInfo(selectedFile);
+                    fileList.classList.remove('hidden');
+                    progressContainer.classList.add('hidden');
+                    progressText.classList.add('hidden');
+                    confirmUploadBtn.disabled = false;
+                } else {
+                    showErrorMessage('请上传视频文件');
+                }
+            }
+        });
+        
+        // 更新文件信息
+        function updateFileInfo(file) {
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+        }
+        
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            else return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        // 显示成功消息
+        function showSuccessMessage(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center animate-fadeIn';
+            toast.innerHTML = `
+                <i class="fas fa-check-circle mr-2"></i>
+                <span>${message}</span>
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('animate-fadeOut');
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 3000);
+        }
+        
+        // 显示信息消息
+        function showInfoMessage(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center animate-fadeIn';
+            toast.innerHTML = `
+                <i class="fas fa-info-circle mr-2"></i>
+                <span>${message}</span>
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('animate-fadeOut');
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 3000);
+        }
+        
+        // 显示错误消息
+        function showErrorMessage(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center animate-fadeIn';
+            toast.innerHTML = `
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                <span>${message}</span>
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('animate-fadeOut');
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 3000);
+        }
+        
+        // 在关键帧图像上添加标记
+        function addMarkersToImages() {
+            const positions = [
+                { x: 30, y: 45, severity: 55 },
+                { x: 70, y: 60, severity: 30 },
+                { x: 50, y: 25, severity: 15 }
+            ];
+            
+            positions.forEach((pos, index) => {
+                const container = document.getElementById(`image${index + 1}`);
+                const marker = document.createElement('div');
+                marker.className = 'image-marker';
+                marker.style.left = `${pos.x}%`;
+                marker.style.top = `${pos.y}%`;
+                
+                // 添加提示信息
+                marker.title = `狭窄程度: ${pos.severity}%`;
+                
+                container.appendChild(marker);
+            });
+        }
+        
+        // 更新当前时间
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            }).replace(/\//g, '-');
+            document.getElementById('currentTime').textContent = timeString;
+        }
+
+        // 初始化
+        function init() {
+            updateTime();
+            setInterval(updateTime, 1000);
+            loadModel();
+            addMarkersToImages();
+            
+            // 初始禁用AI分析按钮
+            aiAnalyzeButton.disabled = true;
+            aiAnalyzeButton.classList.add('opacity-50');
+        }
+
+        // 页面加载完成后初始化
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
